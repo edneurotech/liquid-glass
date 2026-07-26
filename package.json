@@ -37,7 +37,14 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "prepare": "husky",
     "prepublishOnly": "pnpm build"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,css,json,md,yml,yaml}": [
+      "prettier --write",
+      "prettier --check"
+    ]
   },
   "keywords": [
     "liquid-glass",
@@ -74,6 +81,8 @@
   "devDependencies": {
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.8.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
