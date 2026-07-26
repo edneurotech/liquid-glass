@@ -1,13 +1,21 @@
 {
-  "name": "@samasante/liquid-glass",
-  "version": "0.1.1",
+  "name": "@edneurotech/liquid-glass",
+  "version": "0.1.2-experimental.1",
   "description": "A headless React liquid-glass lens that refracts the live DOM. Apple-style Liquid Glass that works in Chrome, Safari, and Firefox. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Sam Asante",
+  "contributors": [
+    {
+      "name": "Ivan Sowerby",
+      "email": "me@ivan.engineer",
+      "url": "https://ivan.engineer/"
+    }
+  ],
   "type": "module",
   "sideEffects": false,
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "files": [
     "dist",
@@ -53,11 +61,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/samasante/liquid-glass.git"
+    "url": "git+https://github.com/edneurotech/liquid-glass.git"
   },
-  "homepage": "https://glass.samasante.com",
+  "homepage": "https://github.com/edneurotech/liquid-glass#readme",
   "bugs": {
-    "url": "https://github.com/samasante/liquid-glass/issues"
+    "url": "https://github.com/edneurotech/liquid-glass/issues"
   },
   "peerDependencies": {
     "react": ">=18",
