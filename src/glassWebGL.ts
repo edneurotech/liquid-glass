@@ -31,6 +31,8 @@ export interface GlassLensDescriptor {
   dispersion: number;
   /** Specular-highlight strength (our `specular`). */
   specular: number;
+  /** Colour saturation; 1 leaves the source unchanged. @default 1 */
+  saturate?: number;
   /** Frost: gaussian blur of the refracted source inside the lens, in px (our
    *  `frost`). 0 = a clear lens; higher reads as frosted "liquid" glass. */
   blur: number;
@@ -112,6 +114,7 @@ uniform float u_sheen;
 uniform float u_frost;    // 0 = sharp; >0 = blend toward the pre-blurred copy
 uniform float u_opacity;  // enter/exit fade (multiplies coverage)
 uniform float u_brightness; // white(>0)/black(<0) veil over the lens
+uniform float u_saturate; // 1 = unchanged; 0 = greyscale
 // Signed distance to a rounded rectangle (negative inside). Computed in pixel
 // space so the corner radius stays circular on non-square lenses. NB: the half-
 // extent arg must NOT be named \`half\` — that's a reserved word in GLSL ES and
@@ -143,6 +146,8 @@ void main() {
   vec2 uvG = v_uv + disp * (1.0 + u_dispersion * 0.11);
   vec2 uvB = v_uv + disp;
   vec3 lensCol = vec3(frosted(uvR, u_frost).r, frosted(uvG, u_frost).g, frosted(uvB, u_frost).b);
+  // Match the material path's backdrop saturation before lifting the sheen.
+  lensCol = mix(vec3(dot(lensCol, vec3(0.2126, 0.7152, 0.0722))), lensCol, u_saturate);
   // Specular lift from B. The map encodes spec as B = 127·s + 128, so (B/255 − 0.5)
   // = 0.498·s; this matches the DOM path's gain exactly (feColorMatrix 1× alpha
   // then feComposite k2=specular → 0.498·specular·s). (NOT ×2 — that double-lifted it.)
@@ -206,6 +211,7 @@ export class GlassWebGLRenderer {
   private uBlitSrc: WebGLUniformLocation | null;
   private srcW = 0;
   private srcH = 0;
+  private blurAmount = -1;
   private disposed = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -265,6 +271,7 @@ export class GlassWebGLRenderer {
       frost: gl.getUniformLocation(this.lens, "u_frost"),
       opacity: gl.getUniformLocation(this.lens, "u_opacity"),
       brightness: gl.getUniformLocation(this.lens, "u_brightness"),
+      saturate: gl.getUniformLocation(this.lens, "u_saturate"),
     };
   }
 
@@ -365,16 +372,23 @@ export class GlassWebGLRenderer {
     }
   }
 
-  private uploadSource(src: TexImageSource, w: number, h: number) {
+  private uploadSource(
+    src: TexImageSource,
+    w: number,
+    h: number,
+    sourceDirty = true,
+  ): boolean {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
     if (w !== this.srcW || h !== this.srcH) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
       this.srcW = w;
       this.srcH = h;
-    } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, src);
+      return true;
     }
+    if (!sourceDirty) return false;
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    return true;
   }
 
   /** Upload `source` once and draw every lens over it. */
@@ -383,10 +397,12 @@ export class GlassWebGLRenderer {
     srcW: number,
     srcH: number,
     lenses: GlassLensDescriptor[],
+    sourceDirty = true,
   ): void {
     if (this.disposed || srcW === 0 || srcH === 0) return;
     const gl = this.gl;
-    this.uploadSource(source, srcW, srcH);
+    const uploaded = this.uploadSource(source, srcW, srcH, sourceDirty);
+    if (uploaded) this.blurAmount = -1;
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.enableVertexAttribArray(0);
@@ -396,7 +412,10 @@ export class GlassWebGLRenderer {
     // Frost pre-pass: blur the source once (at the strongest lens's blur) into the
     // ping-pong target; the lens shader mixes it in for the frosted look.
     const maxBlur = lenses.reduce((mx, d) => Math.max(mx, d.blur), 0);
-    if (maxBlur > 0) this.renderFrost(maxBlur);
+    if (maxBlur > 0 && this.blurAmount !== maxBlur) {
+      this.renderFrost(maxBlur);
+      this.blurAmount = maxBlur;
+    }
 
     const cw = (gl.canvas as HTMLCanvasElement).width;
     const ch = (gl.canvas as HTMLCanvasElement).height;
@@ -444,6 +463,7 @@ export class GlassWebGLRenderer {
       gl.uniform1f(this.uLens.frost, d.blur > 0 ? Math.min(1, d.blur / 8) : 0);
       gl.uniform1f(this.uLens.opacity, opacity);
       gl.uniform1f(this.uLens.brightness, d.brightness ?? 0);
+      gl.uniform1f(this.uLens.saturate, d.saturate ?? 1);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
   }
@@ -464,7 +484,7 @@ export class GlassWebGLRenderer {
     gl.deleteFramebuffer(this.fbo[0]);
     gl.deleteFramebuffer(this.fbo[1]);
     gl.deleteBuffer(this.quad);
-    const lose = gl.getExtension("WEBGL_lose_context");
-    lose?.loseContext();
+    // StrictMode may reuse the canvas after cleanup; explicitly losing its
+    // context would make the replacement renderer fail.
   }
 }

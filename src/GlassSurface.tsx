@@ -62,9 +62,10 @@ export interface GlassSurfaceLens {
   opacity?: number;
   /** Per-lens optics overriding the surface's shared `optics`. The displacement
    *  MAP (dome/edge SHAPE) is still shared from the first lens, but the runtime
-   *  knobs — `strength`/`scaleX`/`scaleY`, `dispersion`, `specular`, `frost`,
-   *  `brightness` — apply per lens. Use it to keep a gentle, flat look on a thin
-   *  lens (e.g. a scrub track) while round controls keep a stronger dome. */
+   *  knobs — `strength`/`scaleX`/`scaleY`, `dispersion`, `specular`, `saturate`,
+   *  `frost`, `brightness` — apply per lens. Use it to keep a gentle, flat look
+   *  on a thin lens (e.g. a scrub track) while round controls keep a stronger
+   *  dome. */
   optics?: Partial<GlassOptics>;
 }
 
@@ -128,6 +129,28 @@ const useLensRenderer = (
   // Live params for the rAF loop (avoid re-subscribing every render).
   const state = useRef(specs);
   state.current = specs;
+  const dirtyRef = useRef(true);
+  dirtyRef.current = true;
+  useEffect(() => {
+    const markDirty = () => {
+      dirtyRef.current = true;
+    };
+    const unsubscribes: Array<() => void> = [];
+    for (const spec of specs) {
+      for (const value of [
+        spec.x,
+        spec.y,
+        spec.lensW,
+        spec.lensH,
+        spec.radius,
+      ]) {
+        if (value != null && isGlassMotionValue(value)) {
+          unsubscribes.push(value.on("change", markDirty));
+        }
+      }
+    }
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }, [specs]);
   // Does any lens carry a motion-value geometry? If so the draw loop must keep
   // ticking even when the video presents no new frame (paused/buffered) — else
   // the requestVideoFrameCallback path would idle and freeze the live lens. A
@@ -170,6 +193,7 @@ const useLensRenderer = (
       out.style.width = `${w}px`;
       out.style.height = `${h}px`;
       renderer.resize(Math.round(w * dpr), Math.round(h * dpr));
+      dirtyRef.current = true;
     };
     sync();
     const ro = new ResizeObserver(sync);
@@ -246,7 +270,10 @@ const useLensRenderer = (
     let stale = false;
     const img = new Image();
     img.onload = () => {
-      if (!stale) rendererRef.current?.setDisplacementMap(img);
+      if (!stale) {
+        rendererRef.current?.setDisplacementMap(img);
+        dirtyRef.current = true;
+      }
     };
     img.src = url;
     return () => {
@@ -266,9 +293,24 @@ const useLensRenderer = (
     const h = readGlassValue(s.lensH);
     const r = s.radius != null ? readGlassValue(s.radius) : Math.min(w, h);
     return JSON.stringify([
-      m.mapSize, w, h, r, m.depth, m.clipToShape, m.softEdge, m.curvature,
-      m.splay, m.glow, m.glowSpread, m.glowFalloff, m.sheen, m.sheenWidth,
-      m.sheenFalloff, m.sheenAngle, m.bend, m.bendWidth,
+      m.mapSize,
+      w,
+      h,
+      r,
+      m.depth,
+      m.clipToShape,
+      m.softEdge,
+      m.curvature,
+      m.splay,
+      m.glow,
+      m.glowSpread,
+      m.glowFalloff,
+      m.sheen,
+      m.sheenWidth,
+      m.sheenFalloff,
+      m.sheenAngle,
+      m.bend,
+      m.bendWidth,
     ]);
   };
   const lensKeys = specs.map(keyOf);
@@ -323,7 +365,10 @@ const useLensRenderer = (
       let stale = false;
       const img = new Image();
       img.onload = () => {
-        if (!stale) perLensMaps.current.set(key, img);
+        if (!stale) {
+          perLensMaps.current.set(key, img);
+          dirtyRef.current = true;
+        }
       };
       img.src = url;
       cleanups.push(() => {
@@ -353,15 +398,39 @@ const useLensRenderer = (
     // idles while paused — the efficient default for a static-geometry player).
     // But a motion-value lens must keep animating even over a paused video, so
     // fall back to rAF when geometry is live (rAF still samples the video frame).
-    const useVfc =
-      !!v &&
-      !hasLiveGeometry &&
-      typeof v.requestVideoFrameCallback === "function";
+    const hasVfc = !!v && typeof v.requestVideoFrameCallback === "function";
+    const useVfc = hasVfc && !hasLiveGeometry;
+    let lastMediaTime = -1;
+    let videoFrames = 0;
+    let sawVideoFrame = false;
+    let videoWatcher = 0;
+    if (!useVfc && hasVfc) {
+      const markVideoFrame = () => {
+        videoFrames += 1;
+        sawVideoFrame = true;
+        videoWatcher = v!.requestVideoFrameCallback(markVideoFrame);
+      };
+      videoWatcher = v!.requestVideoFrameCallback(markVideoFrame);
+    }
+    let drawnVideoFrames = 0;
 
     const draw = () => {
       const renderer = rendererRef.current;
       const container = containerRef.current;
       if (!renderer || !container) return;
+      const mediaTime = v?.currentTime ?? -1;
+      const videoDirty =
+        !v ||
+        (sawVideoFrame
+          ? videoFrames !== drawnVideoFrames
+          : mediaTime !== lastMediaTime);
+      if (!useVfc && v && !videoDirty && !dirtyRef.current) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastMediaTime = mediaTime;
+      drawnVideoFrames = videoFrames;
+      dirtyRef.current = false;
       const frame = getFrame();
       if (frame && frame.w > 0 && frame.h > 0) {
         const cw = container.clientWidth;
@@ -390,7 +459,9 @@ const useLensRenderer = (
           // shape) rather than fall back to lens 0's wrong-shaped map, which would
           // flash the stretched-ellipse artifact this feature exists to avoid.
           const ownsShape = i > 0 && keys[i] !== keys[0];
-          const ownMap = ownsShape ? perLensMaps.current.get(keys[i]) : undefined;
+          const ownMap = ownsShape
+            ? perLensMaps.current.get(keys[i])
+            : undefined;
           const flat = ownsShape && !ownMap;
           return {
             originX: (sx * cw - ehw) / cw,
@@ -405,6 +476,7 @@ const useLensRenderer = (
               : ((s.merged.scaleY ?? s.merged.strength) * surfNorm) / ch,
             dispersion: s.merged.dispersion,
             specular: s.merged.specular,
+            saturate: s.merged.saturate,
             blur: s.merged.frost,
             cornerRadius: (rad * s.scale) / cw,
             opacity: s.opacity,
@@ -412,7 +484,7 @@ const useLensRenderer = (
             dispMap: ownMap,
           };
         });
-        renderer.render(frame.source, frame.w, frame.h, descs);
+        renderer.render(frame.source, frame.w, frame.h, descs, videoDirty);
       }
       if (useVfc) vfc = v!.requestVideoFrameCallback(draw);
       else raf = requestAnimationFrame(draw);
@@ -423,6 +495,7 @@ const useLensRenderer = (
     return () => {
       cancelAnimationFrame(raf);
       if (useVfc && vfc) v!.cancelVideoFrameCallback?.(vfc);
+      if (videoWatcher) v!.cancelVideoFrameCallback?.(videoWatcher);
     };
   }, [failed, getFrame, containerRef, driveOnVideoFrames, hasLiveGeometry]);
 
@@ -616,9 +689,8 @@ export const GlassSurface: React.FC<GlassSurfaceProps> = ({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            // Hidden behind the (opaque) output canvas when WebGL works; shown as
-            // the graceful fallback when it doesn't.
-            visibility: failed ? "visible" : "hidden",
+            // The opaque canvas covers this while WebGL works. Keeping it rendered
+            // prevents Gecko from suspending video decoding.
           }}
         />
       )}
