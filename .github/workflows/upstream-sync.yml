@@ -1,0 +1,95 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: experimental
+          fetch-depth: 0
+
+      - name: Fast-forward main from upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/samasante/liquid-glass.git
+          git fetch origin --prune
+          git fetch upstream main:refs/remotes/upstream/main
+          git switch --force-create main origin/main
+          git merge --ff-only upstream/main
+          git push origin main
+
+      - name: Merge upstream into update branch
+        id: update
+        run: |
+          if git merge-base --is-ancestor origin/main origin/experimental; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git switch --force-create automation/upstream-sync origin/experimental
+          if ! git merge --no-edit origin/main; then
+            git status --short
+            git merge --abort
+            echo "::error::Upstream changes conflict with experimental and require manual resolution."
+            exit 1
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+        if: steps.update.outputs.changed == 'true'
+
+      - uses: actions/setup-node@v7
+        if: steps.update.outputs.changed == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            site/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.update.outputs.changed == 'true'
+      - run: pnpm typecheck
+        if: steps.update.outputs.changed == 'true'
+      - run: pnpm build
+        if: steps.update.outputs.changed == 'true'
+
+      - run: pnpm --dir site install --frozen-lockfile
+        if: steps.update.outputs.changed == 'true'
+      - run: pnpm --dir site typecheck
+        if: steps.update.outputs.changed == 'true'
+      - run: pnpm --dir site build
+        if: steps.update.outputs.changed == 'true'
+
+      - name: Push update branch
+        if: steps.update.outputs.changed == 'true'
+        run: git push --force-with-lease origin HEAD:refs/heads/automation/upstream-sync
+
+      - name: Open pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$(gh pr list --base experimental --head automation/upstream-sync --state open --json number --jq length)" -eq 0 ]; then
+            gh pr create \
+              --base experimental \
+              --head automation/upstream-sync \
+              --title "chore: merge weekly upstream updates" \
+              --body "Automated weekly merge of samasante/liquid-glass main. Package and example-site checks passed before this pull request was opened."
+          fi

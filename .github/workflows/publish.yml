@@ -1,0 +1,40 @@
+name: Publish package
+
+on:
+  push:
+    tags:
+      - "v*-experimental.*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@edneurotech"
+          package-manager-cache: false
+
+      - name: Verify tag matches package version
+        run: node -e "const expected = 'v' + require('./package.json').version; if (process.env.GITHUB_REF_NAME !== expected) throw new Error('Expected tag ' + expected + ', received ' + process.env.GITHUB_REF_NAME)"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+
+      - run: pnpm --dir site install --frozen-lockfile
+      - run: pnpm --dir site typecheck
+      - run: pnpm --dir site build
+
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
