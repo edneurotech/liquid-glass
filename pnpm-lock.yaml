@@ -14,6 +14,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.0
         version: 19.2.3(@types/react@19.2.17)
+      editorconfig-checker:
+        specifier: ^7.0.0
+        version: 7.0.0
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -400,6 +403,11 @@ packages:
     peerDependenciesMeta:
       supports-color:
         optional: true
+
+  editorconfig-checker@7.0.0:
+    resolution: {integrity: sha512-bqTCyzjz6Qbah4hBO032mQiwGstrHL/jwsnlFvlqrDcpv8rv2pSgLo00Fnji1u6PGtSdY6uydzVLUdHupbpNBQ==}
+    engines: {node: '>=24.14.0'}
+    hasBin: true
 
   esbuild@0.27.7:
     resolution: {integrity: sha512-IxpibTjyVnmrIQo5aqNpCgoACA/dTKLTlhMHihVHhdkxKyPO1uBBthumT0rdHmcsk9uMonIWS0m4FljWzILh3w==}
@@ -808,6 +816,8 @@ snapshots:
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
+
+  editorconfig-checker@7.0.0: {}
 
   esbuild@0.27.7:
     optionalDependencies:
