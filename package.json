@@ -1,6 +1,6 @@
 {
   "name": "@edneurotech/liquid-glass",
-  "version": "0.1.2-experimental.1",
+  "version": "0.1.2-experimental.2",
   "description": "A headless React liquid-glass lens that refracts the live DOM. Apple-style Liquid Glass that works in Chrome, Safari, and Firefox. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Sam Asante",
